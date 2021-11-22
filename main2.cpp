@@ -13,30 +13,102 @@ extern "C"
 //#pragma comment(lib,"swscale.lib")
 
 using namespace std;
+
+class FFmpeg_toV210 {
+public:
+	int init(int width, int height) {
+		const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_V210);
+		if (!codec) {
+			return -3;
+		}
+		m_yuv422p10le_v210_ctx = avcodec_alloc_context3(codec);
+		if (!m_yuv422p10le_v210_ctx) {
+			return -4;
+		}
+
+		/* resolution must be a multiple of two */
+		m_yuv422p10le_v210_ctx->width = width;
+		m_yuv422p10le_v210_ctx->height = height;
+		/* frames per second */
+		m_yuv422p10le_v210_ctx->time_base.num = 25;// Config->getFrameRateNum();
+		m_yuv422p10le_v210_ctx->time_base.den = 1;// Config->getFrameRateDen();
+
+		m_yuv422p10le_v210_ctx->framerate.num = 25;// Config->getFrameRateDen();
+		m_yuv422p10le_v210_ctx->framerate.den = 1;// Config->getFrameRateNum();
+
+		m_yuv422p10le_v210_ctx->pix_fmt = AV_PIX_FMT_YUV422P10LE;
+		int ret = avcodec_open2(m_yuv422p10le_v210_ctx, codec, nullptr);
+		if (ret < 0) {
+			return -5;
+		}
+		m_yuv422p10le_v210_pkt = av_packet_alloc();
+		return 0;
+	}
+	int convertToV210( AVFrame* frame, uint8_t* pFrameInfo)
+	{
+		frame->format = AV_PIX_FMT_YUV422P10LE;
+		return convertToV210(m_yuv422p10le_v210_ctx, frame, pFrameInfo);
+		//return convertToV210(m_yuv422p10le_v210_ctx, nullptr, pFrameInfo);
+	}
+private:
+	int convertToV210(AVCodecContext* enc_ctx, AVFrame* frame, uint8_t* pFrameInfo)
+	{
+		int ret = avcodec_send_frame(enc_ctx, frame);
+		if (ret < 0)
+		{
+			return ret;
+		}
+		//while (ret >= 0)
+		{
+			ret = avcodec_receive_packet(enc_ctx, m_yuv422p10le_v210_pkt);
+			if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+				return 0;
+			if (ret < 0)
+			{
+				return ret;
+			}
+			memcpy(pFrameInfo, m_yuv422p10le_v210_pkt->data, m_yuv422p10le_v210_pkt->size);
+			av_packet_unref(m_yuv422p10le_v210_pkt);
+		}
+		return 0;
+	}
+private:
+
+	AVCodecContext* m_yuv422p10le_v210_ctx = nullptr;
+	AVPacket* m_yuv422p10le_v210_pkt = nullptr;
+};
 class BGRA_to_yuv422pyuv422p {
 public:
 	~BGRA_to_yuv422pyuv422p()
 	{
 		sws_freeContext(swsCtx);
 	}
-	bool init(int width,int height,bool is8bits) {
+	bool init(int width,int height,AVPixelFormat format) {
 		av_register_all();
 		m_width = width;
 		m_height = height;
-		m_is8bits = is8bits;
+		m_destFormat = format;
 		swsCtx = sws_getCachedContext(swsCtx,
 			width, height, AV_PIX_FMT_BGRA64,
-			width, height, m_is8bits ?AV_PIX_FMT_YUVA422P: AV_PIX_FMT_YUVA422P16LE, //AV_PIX_FMT_YUVA444P16LE
+			width, height, format, //AV_PIX_FMT_YUVA444P16LE
 			SWS_BICUBIC,
 			NULL, NULL, NULL
 		);
 		rgbFrame = av_frame_alloc();
 		yuvFrame = av_frame_alloc();
+		yuvFrame->width = width;
+		yuvFrame->height = height;
+		yuvFrame->format = format;
+		if (format != AV_PIX_FMT_YUVA422P)
+		{
+			m_FFmpeg_toV210.init(width, height);
+		}
 		return true;
 	}
 
-	void doConvert(uint8_t* pBGRA, uint8_t* pDestBuffer) {
-		av_image_fill_arrays(yuvFrame->data, yuvFrame->linesize, pDestBuffer, m_is8bits ? AV_PIX_FMT_YUVA422P : AV_PIX_FMT_YUVA422P16LE, m_width, m_height, 1);		
+	void doConvert(uint8_t* pBGRA, uint8_t* pDestBuffer, uint8_t* pV210DestBuffer=nullptr) {
+		av_image_fill_arrays(yuvFrame->data, yuvFrame->linesize, pDestBuffer, 
+			m_destFormat, m_width, m_height, 1);
 		avpicture_fill((AVPicture*)rgbFrame, pBGRA,  AV_PIX_FMT_BGRA64, m_width, m_height);
 		//6 Pixel format conversion, the converted YUV data is stored in yuvFrame
 		int outSliceH = sws_scale(swsCtx, rgbFrame->data, rgbFrame->linesize, 0, m_height,
@@ -55,26 +127,67 @@ public:
 				}
 			}
 		};
-		if(m_is8bits)
+		if(m_destFormat== AV_PIX_FMT_YUVA422P)
 			lambdaC((uint8_t*)yuvFrame->data[3]);
 		else
+		{
 			lambdaC((uint16_t*)yuvFrame->data[3]);
+			m_FFmpeg_toV210.convertToV210(yuvFrame, pV210DestBuffer);
+
+			av_image_fill_arrays(yuvFrame->data, yuvFrame->linesize, pDestBuffer+1920*1080*2*2,
+				m_destFormat, m_width, m_height, 1);
+
+			m_FFmpeg_toV210.convertToV210(yuvFrame, pV210DestBuffer+5120*1080);
+		}
 		
 
 	}
 private:
-	bool m_is8bits = false;
+	
 	AVFrame* yuvFrame;
 	AVFrame* rgbFrame;
 	SwsContext* swsCtx = NULL;
 	int m_width;
 	int m_height;
+	FFmpeg_toV210 m_FFmpeg_toV210;
+	AVPixelFormat m_destFormat;
+};
+#include "nameof.hpp"
+#include "fmt/format.h"
+#include <map>
+class Worker {
+public:Worker() {
+	gmap[AV_PIX_FMT_YUVA422P] = "AV_PIX_FMT_YUVA422P";
+	gmap[AV_PIX_FMT_YUVA422P16LE] = "AV_PIX_FMT_YUVA422P16LE";
+	gmap[AV_PIX_FMT_YUVA422P10LE] = "AV_PIX_FMT_YUVA422P10LE";
+}
+	void doWork(int width, int height, AVPixelFormat format, uint8_t* rgbBuf) {
+		
+		auto outfile = fmt::format(R"(d:\tmp\aa_{}_{}_1920x1080_out-8bit.yuv)",(format), gmap[format]);
+		auto outfile10 = fmt::format(R"(d:\tmp\aa_{}_{}_1920x1080_out-10bit.yuv)", (format),gmap[format]);
+
+		fpout10 = fopen(outfile10.data(), "wb");
+		fpout = fopen(outfile.data(), "wb");
+		uint8_t* pDestBuffer = new uint8_t[width * height * 10 * 2];
+
+		uint8_t* pV210DestBuffer = new uint8_t[width * height * 10 * 2];
+		m_worker.init(width,height,format);
+
+		m_worker.doConvert(rgbBuf, pDestBuffer, pV210DestBuffer);
+
+		fwrite(pDestBuffer, width * height * 4 * 2, 1, fpout);
+		fwrite(pV210DestBuffer, width * height * 4 * 2, 1, fpout10);
+
+	}
+private:
+	std::map<int, std::string> gmap;
+	BGRA_to_yuv422pyuv422p m_worker;
+	FILE* fpout10, * fpout;
 };
 int main()
 {
 	char infile[] = R"(D:\tmp\1920x1080.vCFrame_sourceTgaAAAA.RGBA)";
-	char outfile16[] = R"(d:\tmp\1920x1080-out-16bit.yuv)";
-	char outfile8[] = R"(d:\tmp\1920x1080-out-8bit.yuv)";
+	
 	//AV_PIX_FMT_BGRA64
 	// Source image parameters (the parameters must be set correctly, otherwise the conversion will be abnormal)
 	int width = 1920;
@@ -89,33 +202,10 @@ int main()
 		return -1;
 	}
 
-	FILE* fpout8 = fopen(outfile8, "wb");
-	FILE* fpout16 = fopen(outfile16, "wb");
-	if (!fpout8)
-	{
-		cout << infile << "open outfile failed!" << endl;
-		getchar();
-		return -1;
-	}
 	// Create RGB buffer and allocate memory at the same time
 	unsigned char* rgbBuf = new unsigned char[width * height * 4*2];
 
-
-	BGRA_to_yuv422pyuv422p m_convert8;
-	m_convert8.init(width, height, true);
-	BGRA_to_yuv422pyuv422p m_convert16;
-	m_convert16.init(width, height, false);
-
-
-	//3 Create YUV video frame and configure
-
-	/*yuvFrame->format = AV_PIX_FMT_YUVA444P16LE;
-	yuvFrame->width = width;
-	yuvFrame->height = height;
-	av_frame_get_buffer(yuvFrame, 3 * 16);*/
-	uint8_t* pDestBuffer = new uint8_t[width * height * 10 * 2];
-	
-
+	Worker m_worker[3];
 	// Write video files in loop
 	for (;;)
 	{
@@ -125,18 +215,10 @@ int main()
 		{
 			break;
 		}
-
-		//5 Create RGB video frame and bind RGB buffer (avpicture_fill initializes some fields for rgbFrame, and will automatically fill in data and linesize)
-		m_convert8.doConvert(rgbBuf, pDestBuffer);
-
-		fwrite(pDestBuffer, width * height * 4 , 1, fpout8);
-		m_convert16.doConvert(rgbBuf, pDestBuffer);
-		fwrite(pDestBuffer, width * height * 4 * 2, 1, fpout16);
-		//7 Write the data of each component of YUV to the file
-		/*fwrite(yuvFrame->data[0], width * height*2, 1, fpout);
-		fwrite(yuvFrame->data[1], width * height , 1, fpout);
-		fwrite(yuvFrame->data[2], width * height , 1, fpout);*/
-
+		m_worker[0].doWork(width, height, AV_PIX_FMT_YUVA422P, rgbBuf);
+		m_worker[1].doWork(width, height, AV_PIX_FMT_YUVA422P16LE, rgbBuf);
+		m_worker[2].doWork(width, height, AV_PIX_FMT_YUVA422P10LE, rgbBuf);
+		
 		cout << ".";
 	}
 
@@ -144,8 +226,6 @@ int main()
 
 	// Close RGB and YUV files
 	fclose(fpin);
-	fclose(fpout8);
-	fclose(fpout16);
 
 	// Release the RGB buffer
 	delete rgbBuf;
