@@ -89,11 +89,27 @@ public:
 	}
 	void doConvert(uint8_t*pRGBA) {
 		
-		uint8_t* pRGBAEnd = pRGBA + m_width * m_height * 4;
-
-		for (int h = 0; h < m_height; h++)
+		uint64_t* pRGBAEnd = (uint64_t*)(pRGBA + m_width * m_height * 4*2);
+		uint64_t* pPos = (uint64_t*)pRGBA;
+		uint64_t* pDestBuffer = new  uint64_t[m_width * m_height];
+		uint64_t* pDest = pDestBuffer;
+		uint64_t* pBG = (uint64_t*)pBackGround;
+		while(pPos !=pRGBAEnd)
 		{
-			for(int w)
+			int a = (*pPos>>48) & 0xFFf0;
+
+			*pDestBuffer = (a==0xFFF0) ? *pPos : *pBG;
+			pPos++;
+			pBG++;
+			pDestBuffer++;
+		}
+
+		{
+			FILE* fp = fopen("d:\\tmp\\FFmpegrgb2222_background_1920x1080_.rgb", "wb");
+
+			fwrite(pDest, m_width * m_height * 4 * 2, 1, fp);
+			fclose(fp);
+
 		}
 	}
 	void prepareBackGround(int width, int height) {
@@ -103,19 +119,19 @@ public:
 		int gridHeight = 16;
 
 		int gridLine = 0;
-		pBackGround = new uint8_t[width * height * 4];
+		pBackGround = new uint8_t[width * height * 4*2];
 		
 		gridLine = 0;
 		//FFFFFF ,D9D9D9
-		memset(pBackGround, 0xFF, width * height * 4);
+		memset(pBackGround, 0xFF, width * height * 4*2);
 		for (int h = 0; h < height - gridHeight; h += gridHeight)
 		{			
 			for (int w = 0; w < dstWidth; w += gridWidth * 2)
 			{
 				for (int gridH = 0; gridH < gridHeight; gridH++)
 				{
-					unsigned char* y = pBackGround + (dstWidth * (h + gridH) + w + ((gridLine % 2 == 0) ? 0 : gridWidth)) * 4;
-					memset(y, 0xd9, gridWidth * 4);
+					unsigned char* y = pBackGround + (dstWidth * (h + gridH) + w + ((gridLine % 2 == 0) ? 0 : gridWidth)) * 4*2;
+					memset(y, 0xd9, gridWidth * 4*2);
 				}
 			}
 			++gridLine;
@@ -124,14 +140,14 @@ public:
 		{
 			for (int gridH = 0; gridH < (dstHeight - (gridHeight * (dstHeight / gridHeight))); gridH++)
 			{
-				unsigned char* y = pBackGround + (dstWidth * (gridLine * gridHeight + gridH) + w + ((gridLine % 2 == 0) ? 0 : gridWidth)) * 4;
-				memset(y, 0xd9, gridWidth * 4);
+				unsigned char* y = pBackGround + (dstWidth * (gridLine * gridHeight + gridH) + w + ((gridLine % 2 == 0) ? 0 : gridWidth)) * 4*2;
+				memset(y, 0xd9, gridWidth * 4*2);
 			}
 		}
 		{
 			FILE* fp = fopen("d:\\tmp\\FFmpegrgb_background_1920x1080_.rgb", "wb");
 
-			fwrite(pBackGround, width * height * 4, 1, fp);
+			fwrite(pBackGround, width * height * 4*2, 1, fp);
 			fclose(fp);
 
 		}
@@ -228,7 +244,7 @@ private:
 };
 int main()
 {
-	char infile[] = R"(D:\tmp\1920x1080.vCFrame_sourceTgaAAAA.RGBA)";
+	char infile[] = R"(..\..\..\1920x1080.vCFrame_sourceTgaAAAA.RGBA)";
 	
 	//AV_PIX_FMT_BGRA64
 	// Source image parameters (the parameters must be set correctly, otherwise the conversion will be abnormal)
@@ -258,6 +274,7 @@ int main()
 		{
 			break;
 		}
+		m_RGBA_to_JPEG.doConvert(rgbBuf);
 		m_worker[0].doWork(width, height, AV_PIX_FMT_YUVA422P, rgbBuf);
 		m_worker[1].doWork(width, height, AV_PIX_FMT_YUVA422P16LE, rgbBuf);
 		m_worker[2].doWork(width, height, AV_PIX_FMT_YUVA422P10LE, rgbBuf);
