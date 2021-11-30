@@ -90,18 +90,25 @@ public:
 	void doConvert(uint8_t*pRGBA) {
 		
 		uint64_t* pRGBAEnd = (uint64_t*)(pRGBA + m_width * m_height * 4*2);
-		uint64_t* pPos = (uint64_t*)pRGBA;
+		uint64_t* pPosA = (uint64_t*)pRGBA;
 		uint64_t* pDestBuffer = new  uint64_t[m_width * m_height];
 		uint64_t* pDest = pDestBuffer;
 		uint64_t* pBG = (uint64_t*)pBackGround;
-		while(pPos !=pRGBAEnd)
+		
+		//while(pPos !=pRGBAEnd)
+		for(int h=0;h<m_height;h++)
 		{
-			int a = (*pPos>>48) & 0xFFf0;
+			
+			for (int w = 0; w < m_width; w+=2)
+			{
+				uint64_t* pPos = pPosA + h * m_width+w;
 
-			*pDestBuffer = (a==0xFFF0) ? *pPos : *pBG;
-			pPos++;
-			pBG++;
-			pDestBuffer++;
+				int a = (*pPos >> 48) & 0xFFf0;
+				*pDestBuffer = (a == 0xFFF0) ? *pPos : *pBG;
+			
+				pBG++;
+				pDestBuffer++;
+			}
 		}
 
 		{
@@ -109,8 +116,8 @@ public:
 
 			fwrite(pDest, m_width * m_height * 4 * 2, 1, fp);
 			fclose(fp);
-
 		}
+
 	}
 	void prepareBackGround(int width, int height) {
 		int dstWidth = width;
