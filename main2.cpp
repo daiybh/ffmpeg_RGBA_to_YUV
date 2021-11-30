@@ -77,6 +77,72 @@ private:
 	AVCodecContext* m_yuv422p10le_v210_ctx = nullptr;
 	AVPacket* m_yuv422p10le_v210_pkt = nullptr;
 };
+class RGBA_to_JPEG
+{
+public:
+	int init(int width, int height) {
+		m_width = width;
+		m_height = height;
+		prepareBackGround(width, height);
+
+		return 0;
+	}
+	void doConvert(uint8_t*pRGBA) {
+		
+		uint8_t* pRGBAEnd = pRGBA + m_width * m_height * 4;
+
+		for (int h = 0; h < m_height; h++)
+		{
+			for(int w)
+		}
+	}
+	void prepareBackGround(int width, int height) {
+		int dstWidth = width;
+		int dstHeight = height;
+		int gridWidth = 16;
+		int gridHeight = 16;
+
+		int gridLine = 0;
+		pBackGround = new uint8_t[width * height * 4];
+		
+		gridLine = 0;
+		//FFFFFF ,D9D9D9
+		memset(pBackGround, 0xFF, width * height * 4);
+		for (int h = 0; h < height - gridHeight; h += gridHeight)
+		{			
+			for (int w = 0; w < dstWidth; w += gridWidth * 2)
+			{
+				for (int gridH = 0; gridH < gridHeight; gridH++)
+				{
+					unsigned char* y = pBackGround + (dstWidth * (h + gridH) + w + ((gridLine % 2 == 0) ? 0 : gridWidth)) * 4;
+					memset(y, 0xd9, gridWidth * 4);
+				}
+			}
+			++gridLine;
+		}
+		for (int w = 0; w < dstWidth; w += gridWidth * 2)
+		{
+			for (int gridH = 0; gridH < (dstHeight - (gridHeight * (dstHeight / gridHeight))); gridH++)
+			{
+				unsigned char* y = pBackGround + (dstWidth * (gridLine * gridHeight + gridH) + w + ((gridLine % 2 == 0) ? 0 : gridWidth)) * 4;
+				memset(y, 0xd9, gridWidth * 4);
+			}
+		}
+		{
+			FILE* fp = fopen("d:\\tmp\\FFmpegrgb_background_1920x1080_.rgb", "wb");
+
+			fwrite(pBackGround, width * height * 4, 1, fp);
+			fclose(fp);
+
+		}
+	}
+
+private:
+	uint8_t* pBackGround = nullptr;
+	int m_width;
+	int m_height;
+private:
+};
 class BGRA_to_yuv422pyuv422p {
 public:
 	~BGRA_to_yuv422pyuv422p()
@@ -98,15 +164,11 @@ public:
 		yuvFrame = av_frame_alloc();
 		yuvFrame->width = width;
 		yuvFrame->height = height;
-		yuvFrame->format = format;
-		if (format != AV_PIX_FMT_YUVA422P)
-		{
-			m_FFmpeg_toV210.init(width, height);
-		}
+		yuvFrame->format = format;		
 		return true;
 	}
 
-	void doConvert(uint8_t* pBGRA, uint8_t* pDestBuffer, uint8_t* pV210DestBuffer=nullptr) {
+	void doConvert(uint8_t* pBGRA, uint8_t* pDestBuffer) {
 		av_image_fill_arrays(yuvFrame->data, yuvFrame->linesize, pDestBuffer, 
 			m_destFormat, m_width, m_height, 1);
 		avpicture_fill((AVPicture*)rgbFrame, pBGRA,  AV_PIX_FMT_BGRA64, m_width, m_height);
@@ -129,18 +191,8 @@ public:
 		};
 		if(m_destFormat== AV_PIX_FMT_YUVA422P)
 			lambdaC((uint8_t*)yuvFrame->data[3]);
-		else
-		{
+		else		
 			lambdaC((uint16_t*)yuvFrame->data[3]);
-			m_FFmpeg_toV210.convertToV210(yuvFrame, pV210DestBuffer);
-
-			av_image_fill_arrays(yuvFrame->data, yuvFrame->linesize, pDestBuffer+1920*1080*2*2,
-				m_destFormat, m_width, m_height, 1);
-
-			m_FFmpeg_toV210.convertToV210(yuvFrame, pV210DestBuffer+5120*1080);
-		}
-		
-
 	}
 private:
 	
@@ -149,7 +201,6 @@ private:
 	SwsContext* swsCtx = NULL;
 	int m_width;
 	int m_height;
-	FFmpeg_toV210 m_FFmpeg_toV210;
 	AVPixelFormat m_destFormat;
 };
 #include "nameof.hpp"
@@ -164,20 +215,11 @@ public:Worker() {
 	void doWork(int width, int height, AVPixelFormat format, uint8_t* rgbBuf) {
 		
 		auto outfile = fmt::format(R"(d:\tmp\aa_{}_{}_1920x1080_out-8bit.yuv)",(format), gmap[format]);
-		auto outfile10 = fmt::format(R"(d:\tmp\aa_{}_{}_1920x1080_out-10bit.yuv)", (format),gmap[format]);
-
-		fpout10 = fopen(outfile10.data(), "wb");
 		fpout = fopen(outfile.data(), "wb");
-		uint8_t* pDestBuffer = new uint8_t[width * height * 10 * 2];
-
-		uint8_t* pV210DestBuffer = new uint8_t[width * height * 10 * 2];
+		uint8_t* pDestBuffer = new uint8_t[width * height * 10 * 2];		
 		m_worker.init(width,height,format);
-
-		m_worker.doConvert(rgbBuf, pDestBuffer, pV210DestBuffer);
-
+		m_worker.doConvert(rgbBuf, pDestBuffer);
 		fwrite(pDestBuffer, width * height * 4 * 2, 1, fpout);
-		fwrite(pV210DestBuffer, width * height * 4 * 2, 1, fpout10);
-
 	}
 private:
 	std::map<int, std::string> gmap;
@@ -204,7 +246,8 @@ int main()
 
 	// Create RGB buffer and allocate memory at the same time
 	unsigned char* rgbBuf = new unsigned char[width * height * 4*2];
-
+	RGBA_to_JPEG m_RGBA_to_JPEG;
+	m_RGBA_to_JPEG.init(width, height);
 	Worker m_worker[3];
 	// Write video files in loop
 	for (;;)
